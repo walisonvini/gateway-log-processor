@@ -7,13 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 class GatewayLog extends Model
 {
     /**
-     * created_at comes from the log and processed_at from the database,
-     * so Eloquent must not manage the timestamps.
+     * O created_at vem do log e o processed_at é gerado pelo banco,
+     * então o Eloquent não deve gerenciar os timestamps.
      */
     public $timestamps = false;
 
     /**
-     * The attributes that are mass assignable.
+     * Os atributos que podem ser atribuídos em massa.
      *
      * @var list<string>
      */
@@ -32,7 +32,7 @@ class GatewayLog extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * Retorna os atributos que devem ser convertidos.
      *
      * @return array<string, string>
      */

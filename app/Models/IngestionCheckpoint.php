@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class IngestionCheckpoint extends Model
 {
     /**
-     * The attributes that are mass assignable.
+     * Os atributos que podem ser atribuídos em massa.
      *
      * @var list<string>
      */
@@ -19,7 +19,7 @@ class IngestionCheckpoint extends Model
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * Retorna os atributos que devem ser convertidos.
      *
      * @return array<string, string>
      */
