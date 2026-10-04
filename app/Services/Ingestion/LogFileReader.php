@@ -55,15 +55,27 @@ class LogFileReader
     }
 
     /**
+     * Retorna o tamanho atual do arquivo em bytes.
+     *
+     * @throws LogFileNotReadableException
+     */
+    public function size(string $path): int
+    {
+        $this->ensureReadable($path);
+
+        clearstatcache(true, $path);
+
+        return filesize($path);
+    }
+
+    /**
      * @return resource
      *
      * @throws LogFileNotReadableException
      */
     private function open(string $path)
     {
-        if (! is_file($path) || ! is_readable($path)) {
-            throw LogFileNotReadableException::forPath($path);
-        }
+        $this->ensureReadable($path);
 
         $handle = fopen($path, 'rb');
 
@@ -72,5 +84,15 @@ class LogFileReader
         }
 
         return $handle;
+    }
+
+    /**
+     * @throws LogFileNotReadableException
+     */
+    private function ensureReadable(string $path): void
+    {
+        if (! is_file($path) || ! is_readable($path)) {
+            throw LogFileNotReadableException::forPath($path);
+        }
     }
 }

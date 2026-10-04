@@ -5,6 +5,7 @@ namespace App\Services\Ingestion;
 use App\DTOs\IngestionResult;
 use App\DTOs\LogLine;
 use App\Exceptions\InvalidLogLineException;
+use App\Exceptions\LogFileChangedException;
 use App\Exceptions\LogFileNotReadableException;
 use App\Models\GatewayLog;
 use App\Models\IngestionCheckpoint;
@@ -23,12 +24,15 @@ class LogIngestionService
      * Lê o arquivo de log em lotes, a partir do ponto em que a última
      * execução parou, e insere cada lote no banco.
      *
+     * Com $restart, o checkpoint é descartado e o arquivo é processado desde o início.
+     *
      * @throws LogFileNotReadableException
+     * @throws LogFileChangedException
      */
-    public function ingest(string $path, int $batchSize = 1000): IngestionResult
+    public function ingest(string $path, int $batchSize = 1000, bool $restart = false): IngestionResult
     {
         $path = realpath($path) ?: $path;
-        $checkpoint = IngestionCheckpoint::firstWhere('file_path', $path);
+        $checkpoint = $this->resolveCheckpoint($path, $restart);
         $offset = $checkpoint?->byte_offset ?? 0;
 
         $processed = 0;
@@ -50,6 +54,37 @@ class LogIngestionService
         }
 
         return new IngestionResult($processed, $skipped);
+    }
+
+    /**
+     * Busca o checkpoint do arquivo e garante que ele ainda se refere ao mesmo arquivo.
+     *
+     * @throws LogFileNotReadableException
+     * @throws LogFileChangedException
+     */
+    private function resolveCheckpoint(string $path, bool $restart): ?IngestionCheckpoint
+    {
+        $checkpoint = IngestionCheckpoint::firstWhere('file_path', $path);
+
+        if ($checkpoint === null) {
+            return null;
+        }
+
+        if ($restart) {
+            $checkpoint->delete();
+
+            return null;
+        }
+
+        if ($this->reader->size($path) < $checkpoint->byte_offset) {
+            throw LogFileChangedException::truncated($path);
+        }
+
+        if ($this->reader->fingerprint($path) !== $checkpoint->fingerprint) {
+            throw LogFileChangedException::replaced($path);
+        }
+
+        return $checkpoint;
     }
 
     /**
