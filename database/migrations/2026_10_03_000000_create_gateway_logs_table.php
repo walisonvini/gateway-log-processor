@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('gateway_logs', function (Blueprint $table) {
             $table->id();
-            $table->uuid('consumer_id')->nullable()->index();
+            $table->uuid('consumer_id')->index();
             $table->uuid('service_id');
             $table->string('service_name');
             $table->string('request_method', 10);
