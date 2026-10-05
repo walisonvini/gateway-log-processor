@@ -7,6 +7,8 @@ use App\Exceptions\LogFileNotReadableException;
 use App\Services\Ingestion\LogIngestionService;
 use Illuminate\Console\Command;
 
+use function Laravel\Prompts\spin;
+
 class IngestGatewayLogs extends Command
 {
     /**
@@ -48,8 +50,13 @@ class IngestGatewayLogs extends Command
             return self::FAILURE;
         }
 
+        $startedAt = microtime(true);
+
         try {
-            $result = $service->ingest($path, $batchSize, $this->option('restart'));
+            $result = spin(
+                fn () => $service->ingest($path, $batchSize, $this->option('restart')),
+                "Processando {$path}...",
+            );
         } catch (LogFileNotReadableException $exception) {
             $this->error($exception->getMessage());
 
@@ -61,7 +68,9 @@ class IngestGatewayLogs extends Command
             return self::FAILURE;
         }
 
-        $this->info('Ingestão concluída.');
+        $seconds = number_format(microtime(true) - $startedAt, 1, ',', '.');
+
+        $this->info("Ingestão concluída em {$seconds} s.");
         $this->line("Linhas processadas: {$result->processed}");
         $this->line("Linhas ignoradas: {$result->skipped}");
 
