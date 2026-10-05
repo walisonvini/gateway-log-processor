@@ -118,6 +118,10 @@ class GatewayLogParserTest extends TestCase
             'número negativo' => ['latencies.request', -1],
             'número decimal' => ['response.status', 200.5],
             'data como texto' => ['started_at', '2019-08-24'],
+            'texto maior que a coluna' => ['request.uri', '/'.str_repeat('a', 2048)],
+            'número maior que a coluna' => ['response.status', 70000],
+            'started_at em milissegundos' => ['started_at', 1433209822425],
+            'started_at zerado' => ['started_at', 0],
         ];
     }
 
