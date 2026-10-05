@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use Database\Factories\GatewayLogFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class GatewayLog extends Model
 {
+    /** @use HasFactory<GatewayLogFactory> */
+    use HasFactory;
+
     /**
      * O created_at vem do log e o processed_at é gerado pelo banco,
      * então o Eloquent não deve gerenciar os timestamps.
