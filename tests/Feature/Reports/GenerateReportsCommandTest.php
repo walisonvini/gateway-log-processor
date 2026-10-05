@@ -85,6 +85,21 @@ class GenerateReportsCommandTest extends TestCase
         );
     }
 
+    public function test_it_fails_when_the_reports_cannot_be_written(): void
+    {
+        // Um arquivo ocupa o lugar onde o diretório de saída precisaria ser criado.
+        mkdir($this->directory);
+        file_put_contents($this->directory.'/ocupado', '');
+
+        $output = $this->directory.'/ocupado/relatorios';
+
+        $this->artisan('reports:generate', ['--output' => $output])
+            ->expectsOutput("Não foi possível gravar relatórios no diretório [{$output}].")
+            ->assertFailed();
+
+        $this->assertSame(['ocupado'], $this->generatedFiles());
+    }
+
     /**
      * Nomes dos arquivos gerados no diretório do teste, em ordem alfabética.
      *
