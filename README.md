@@ -20,14 +20,71 @@ cd gateway-log-processor
 cp .env.example .env
 ```
 
-3. Suba os containers
+3. Construa a imagem
 ```bash
-docker compose up -d --build
+docker compose build
 ```
 
-4. Acompanhe a primeira subida
+4. Suba os containers
+```bash
+docker compose up -d
+```
+
+5. Acompanhe a primeira subida
 ```bash
 # As dependências, a APP_KEY e as migrations são preparadas automaticamente.
 # A aplicação está pronta quando aparecer "Server running on [http://0.0.0.0:8000]".
 docker compose logs -f app
 ```
+
+## 🚀 Uso
+
+1. Copie o arquivo de log para a pasta `logs/` do projeto
+```bash
+cp /caminho/do/seu/logs.txt logs/
+```
+
+2. Processe o arquivo
+```bash
+# A pasta logs/ do projeto é vista pelo container como /logs.
+docker compose exec app php artisan logs:ingest /logs/logs.txt
+```
+
+O processamento é incremental: ao rodar o comando de novo, apenas as linhas novas do arquivo são processadas.
+
+| Opção | Descrição |
+|-------|-----------|
+| `--batch=1000` | Quantidade de linhas inseridas por lote, de 100 a 1000 |
+| `--restart` | Descarta o ponto de retomada e processa o arquivo desde o início |
+
+3. Gere os relatórios
+```bash
+docker compose exec app php artisan reports:generate
+```
+
+Os arquivos são gravados em `storage/app/reports`:
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `requests_by_consumer.csv` | Total de requisições por consumidor |
+| `requests_by_service.csv` | Total de requisições por serviço |
+| `average_latency_by_service.csv` | Latência média (request, proxy e gateway) por serviço |
+
+Para gerar apenas um relatório, informe o nome dele:
+```bash
+docker compose exec app php artisan reports:generate requests-by-service
+```
+
+## 🧪 Testes
+
+1. Execute os testes
+```bash
+docker compose exec app php artisan test
+```
+
+2. Veja a cobertura
+```bash
+docker compose exec app php artisan test --coverage
+```
+
+Os testes usam um banco MySQL separado, `testing`, criado automaticamente na primeira subida. O banco principal não é afetado.

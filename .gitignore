@@ -1,5 +1,6 @@
 *.log
-/logs/
+/logs/*
+!/logs/.gitkeep
 .DS_Store
 .env
 .env.backup
