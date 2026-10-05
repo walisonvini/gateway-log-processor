@@ -7,7 +7,7 @@ use Carbon\CarbonImmutable;
 final readonly class GatewayLogData
 {
     public function __construct(
-        public ?string $consumerId,
+        public string $consumerId,
         public string $serviceId,
         public string $serviceName,
         public string $requestMethod,
@@ -23,7 +23,7 @@ final readonly class GatewayLogData
     /**
      * Retorna a linha a ser inserida na tabela gateway_logs.
      *
-     * @return array<string, int|string|null>
+     * @return array<string, int|string>
      */
     public function toArray(): array
     {

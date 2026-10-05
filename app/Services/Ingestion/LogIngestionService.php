@@ -91,7 +91,7 @@ class LogIngestionService
      * Converte as linhas do lote e informa até onde o arquivo foi consumido.
      *
      * @param  iterable<int, LogLine>  $batch
-     * @return array{0: list<array<string, int|string|null>>, 1: int, 2: int|null}
+     * @return array{0: list<array<string, int|string>>, 1: int, 2: int|null}
      */
     private function parseBatch(iterable $batch, string $path): array
     {
@@ -128,7 +128,7 @@ class LogIngestionService
     /**
      * Grava o lote e o checkpoint na mesma transação: ou os dois são salvos, ou nenhum.
      *
-     * @param  list<array<string, int|string|null>>  $rows
+     * @param  list<array<string, int|string>>  $rows
      */
     private function persistBatch(array $rows, int $endOffset, string $path, ?IngestionCheckpoint $checkpoint): IngestionCheckpoint
     {

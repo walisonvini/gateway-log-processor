@@ -11,12 +11,6 @@ use JsonException;
 class GatewayLogParser
 {
     /**
-     * Timestamps a partir deste valor estão em milissegundos:
-     * em segundos, ele só seria atingido no ano 5138.
-     */
-    private const MILLISECONDS_THRESHOLD = 100_000_000_000;
-
-    /**
      * Converte uma linha NDJSON em um log do gateway.
      *
      * @throws InvalidLogLineException
@@ -34,7 +28,7 @@ class GatewayLogParser
         }
 
         return new GatewayLogData(
-            consumerId: $this->consumerId($payload),
+            consumerId: $this->string($payload, 'authenticated_entity.consumer_id.uuid'),
             serviceId: $this->string($payload, 'service.id'),
             serviceName: $this->string($payload, 'service.name'),
             requestMethod: $this->string($payload, 'request.method'),
@@ -49,43 +43,16 @@ class GatewayLogParser
     }
 
     /**
-     * O consumidor vem como um UUID direto ou como um objeto que o contém,
-     * e não existe em requisições não autenticadas.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    private function consumerId(array $payload): ?string
-    {
-        $consumer = Arr::get($payload, 'authenticated_entity.consumer_id');
-
-        if (is_array($consumer)) {
-            $consumer = $consumer['uuid'] ?? null;
-        }
-
-        if ($consumer === null) {
-            return null;
-        }
-
-        if (! is_string($consumer) || $consumer === '') {
-            throw InvalidLogLineException::invalidField('authenticated_entity.consumer_id');
-        }
-
-        return $consumer;
-    }
-
-    /**
-     * O gateway informa o started_at em segundos ou em milissegundos.
+     * O gateway informa o started_at como timestamp Unix, em segundos.
      *
      * @param  array<string, mixed>  $payload
      */
     private function startedAt(array $payload): CarbonImmutable
     {
-        $startedAt = $this->integer($payload, 'started_at');
-        $timezone = date_default_timezone_get();
-
-        return $startedAt >= self::MILLISECONDS_THRESHOLD
-            ? CarbonImmutable::createFromTimestampMs($startedAt, $timezone)
-            : CarbonImmutable::createFromTimestamp($startedAt, $timezone);
+        return CarbonImmutable::createFromTimestamp(
+            $this->integer($payload, 'started_at'),
+            date_default_timezone_get(),
+        );
     }
 
     /**
