@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Create the testing database
+# Cria o banco usado pelos testes. O nome é fixo porque o phpunit.xml aponta para ele.
 mysql -u root -p"${MYSQL_ROOT_PASSWORD}" <<-EOSQL
-CREATE DATABASE IF NOT EXISTS ${DB_DATABASE}_testing;
-GRANT ALL PRIVILEGES ON ${DB_DATABASE}_testing.* TO '${MYSQL_USER}'@'%';
+CREATE DATABASE IF NOT EXISTS testing;
+GRANT ALL PRIVILEGES ON testing.* TO '${MYSQL_USER}'@'%';
 FLUSH PRIVILEGES;
 EOSQL
