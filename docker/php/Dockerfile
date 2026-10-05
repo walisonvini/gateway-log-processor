@@ -19,6 +19,9 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 # Instalar extensões de PHP necessárias para o Laravel
 RUN docker-php-ext-install pdo_mysql mbstring pcntl bcmath zip
 
+# Instalar o PCOV, usado para medir a cobertura dos testes
+RUN pecl install pcov && docker-php-ext-enable pcov
+
 # Copiar a versão mais recente do Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
