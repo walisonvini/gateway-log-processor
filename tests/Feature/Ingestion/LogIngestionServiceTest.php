@@ -2,9 +2,17 @@
 
 namespace Tests\Feature\Ingestion;
 
+use App\Exceptions\LogFileChangedException;
+use App\Exceptions\LogFileNotReadableException;
 use App\Models\GatewayLog;
+use App\Models\IngestionCheckpoint;
+use App\Services\Ingestion\GatewayLogParser;
+use App\Services\Ingestion\LogFileReader;
 use App\Services\Ingestion\LogIngestionService;
+use Generator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Tests\TestCase;
 
 class LogIngestionServiceTest extends TestCase
@@ -75,6 +83,338 @@ class LogIngestionServiceTest extends TestCase
         $this->assertSame(2019, $log->created_at->year);
     }
 
+    public function test_it_ingests_a_file_larger_than_the_batch_size(): void
+    {
+        // 25 linhas em lotes de 10: dois lotes cheios e um parcial.
+        $lines = [];
+
+        for ($i = 1; $i <= 25; $i++) {
+            $lines[] = $this->logLine(['client_ip' => "10.0.0.{$i}"]);
+        }
+
+        $path = $this->createLogFile($lines);
+
+        $result = app(LogIngestionService::class)->ingest($path, batchSize: 10);
+
+        $this->assertSame(25, $result->processed);
+        $this->assertSame(25, GatewayLog::distinct()->count('client_ip'));
+        $this->assertDatabaseCount('gateway_logs', 25);
+
+        $checkpoint = IngestionCheckpoint::sole();
+
+        $this->assertSame(filesize($path), $checkpoint->byte_offset);
+        $this->assertSame(25, $checkpoint->processed_lines);
+    }
+
+    public function test_it_does_not_duplicate_logs_when_run_again(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(),
+            $this->logLine(),
+            $this->logLine(),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $first = $service->ingest($path);
+        $second = $service->ingest($path);
+
+        $this->assertSame(3, $first->processed);
+        $this->assertSame(0, $second->processed);
+        $this->assertDatabaseCount('gateway_logs', 3);
+        $this->assertDatabaseCount('ingestion_checkpoints', 1);
+    }
+
+    public function test_it_ingests_only_the_lines_appended_since_the_last_run(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $first = $service->ingest($path);
+
+        $this->appendToLogFile($path, [
+            $this->logLine(['client_ip' => '10.0.0.3']),
+            $this->logLine(['client_ip' => '10.0.0.4']),
+        ]);
+
+        $second = $service->ingest($path);
+
+        $this->assertSame(2, $first->processed);
+        $this->assertSame(2, $second->processed);
+
+        // Cada linha aparece uma única vez, na ordem do arquivo.
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+
+        $this->assertSame(4, IngestionCheckpoint::sole()->processed_lines);
+    }
+
+    public function test_it_resumes_from_the_last_saved_batch_after_a_failure(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+            $this->logLine(['client_ip' => '10.0.0.3']),
+            $this->logLine(['client_ip' => '10.0.0.4']),
+            $this->logLine(['client_ip' => '10.0.0.5']),
+        ]);
+
+        // Leitor que falha ao ler a 4ª linha: com lotes de 2, só o primeiro lote é gravado.
+        $failingReader = new class extends LogFileReader
+        {
+            public function lines(string $path, int $offset = 0): Generator
+            {
+                $read = 0;
+
+                foreach (parent::lines($path, $offset) as $line) {
+                    if (++$read > 3) {
+                        throw new RuntimeException('Falha simulada na leitura.');
+                    }
+
+                    yield $line;
+                }
+            }
+        };
+
+        try {
+            (new LogIngestionService($failingReader, new GatewayLogParser))->ingest($path, batchSize: 2);
+
+            $this->fail('A ingestão deveria ter sido interrompida.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Falha simulada na leitura.', $exception->getMessage());
+        }
+
+        $this->assertDatabaseCount('gateway_logs', 2);
+        $this->assertSame(2, IngestionCheckpoint::sole()->processed_lines);
+
+        $result = app(LogIngestionService::class)->ingest($path, batchSize: 2);
+
+        $this->assertSame(3, $result->processed);
+
+        // Nenhuma linha duplicada nem perdida.
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.5'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+    }
+
+    public function test_it_does_not_keep_the_batch_when_the_checkpoint_cannot_be_saved(): void
+    {
+        $path = $this->createLogFile([$this->logLine(), $this->logLine()]);
+
+        // Faz o salvamento do checkpoint falhar, depois de o lote já ter sido inserido.
+        IngestionCheckpoint::saving(function () {
+            throw new RuntimeException('Falha simulada ao salvar o checkpoint.');
+        });
+
+        try {
+            app(LogIngestionService::class)->ingest($path);
+
+            $this->fail('A ingestão deveria ter sido interrompida.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Falha simulada ao salvar o checkpoint.', $exception->getMessage());
+        }
+
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('ingestion_checkpoints', 0);
+    }
+
+    public function test_it_skips_invalid_lines_and_ingests_the_others(): void
+    {
+        Log::spy();
+
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            '{"request":{"method":"GE',
+            $this->logLine(['service' => ['name' => null]]),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $result = $service->ingest($path);
+
+        $this->assertSame(2, $result->processed);
+        $this->assertSame(2, $result->skipped);
+
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+
+        Log::shouldHaveReceived('warning')->twice();
+
+        // As linhas inválidas ficam para trás: não são lidas de novo.
+        $again = $service->ingest($path);
+
+        $this->assertSame(0, $again->processed);
+        $this->assertSame(0, $again->skipped);
+    }
+
+    public function test_it_leaves_an_unfinished_last_line_for_the_next_run(): void
+    {
+        Log::spy();
+
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+        ]);
+
+        // O gateway começou a escrever a terceira linha, mas ainda não terminou (sem quebra de linha).
+        $thirdLine = $this->logLine(['client_ip' => '10.0.0.3']);
+
+        file_put_contents($path, substr($thirdLine, 0, 50), FILE_APPEND);
+
+        $service = app(LogIngestionService::class);
+
+        $first = $service->ingest($path);
+
+        $this->assertSame(2, $first->processed);
+        $this->assertSame(0, $first->skipped);
+        $this->assertDatabaseCount('gateway_logs', 2);
+
+        Log::shouldNotHaveReceived('warning');
+
+        // O gateway termina de escrever a linha.
+        file_put_contents($path, substr($thirdLine, 50)."\n", FILE_APPEND);
+
+        $second = $service->ingest($path);
+
+        $this->assertSame(1, $second->processed);
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2', '10.0.0.3'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+    }
+
+    public function test_it_fails_when_the_file_is_smaller_than_what_was_already_processed(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+            $this->logLine(['client_ip' => '10.0.0.3']),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $service->ingest($path);
+
+        $offsetBefore = IngestionCheckpoint::sole()->byte_offset;
+
+        // O arquivo é trocado por outro, com uma única linha.
+        $this->replaceLogFile($path, [$this->logLine(['client_ip' => '10.0.0.9'])]);
+
+        try {
+            $service->ingest($path);
+
+            $this->fail('A ingestão deveria ter sido interrompida.');
+        } catch (LogFileChangedException $exception) {
+            $this->assertStringContainsString('está menor do que o trecho já processado', $exception->getMessage());
+        }
+
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2', '10.0.0.3'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+        $this->assertSame($offsetBefore, IngestionCheckpoint::sole()->byte_offset);
+    }
+
+    public function test_it_fails_when_the_file_was_replaced_by_another_one(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $service->ingest($path);
+
+        $fingerprintBefore = IngestionCheckpoint::sole()->fingerprint;
+
+        // Outro arquivo no mesmo caminho: maior que o anterior, mas começando por outra linha.
+        $this->replaceLogFile($path, [
+            $this->logLine(['client_ip' => '10.0.0.7']),
+            $this->logLine(['client_ip' => '10.0.0.8']),
+            $this->logLine(['client_ip' => '10.0.0.9']),
+        ]);
+
+        try {
+            $service->ingest($path);
+
+            $this->fail('A ingestão deveria ter sido interrompida.');
+        } catch (LogFileChangedException $exception) {
+            $this->assertStringContainsString('a primeira linha mudou', $exception->getMessage());
+        }
+
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+        $this->assertSame($fingerprintBefore, IngestionCheckpoint::sole()->fingerprint);
+    }
+
+    public function test_it_restarts_from_the_beginning_keeping_the_previous_logs(): void
+    {
+        $path = $this->createLogFile([
+            $this->logLine(['client_ip' => '10.0.0.1']),
+            $this->logLine(['client_ip' => '10.0.0.2']),
+        ]);
+
+        $service = app(LogIngestionService::class);
+
+        $service->ingest($path);
+
+        $fingerprintBefore = IngestionCheckpoint::sole()->fingerprint;
+
+        // Um novo arquivo assume o mesmo caminho (rotação de log).
+        $this->replaceLogFile($path, [
+            $this->logLine(['client_ip' => '10.0.0.7']),
+            $this->logLine(['client_ip' => '10.0.0.8']),
+            $this->logLine(['client_ip' => '10.0.0.9']),
+        ]);
+
+        $result = $service->ingest($path, restart: true);
+
+        $this->assertSame(3, $result->processed);
+
+        // Os registros do arquivo anterior continuam, e os do novo são somados.
+        $this->assertSame(
+            ['10.0.0.1', '10.0.0.2', '10.0.0.7', '10.0.0.8', '10.0.0.9'],
+            GatewayLog::orderBy('id')->pluck('client_ip')->all(),
+        );
+
+        $checkpoint = IngestionCheckpoint::sole();
+
+        $this->assertNotSame($fingerprintBefore, $checkpoint->fingerprint);
+        $this->assertSame(3, $checkpoint->processed_lines);
+
+        // O novo arquivo passa a ser o de referência: a execução normal volta a funcionar.
+        $this->assertSame(0, $service->ingest($path)->processed);
+    }
+
+    public function test_it_fails_when_the_file_does_not_exist(): void
+    {
+        $path = sys_get_temp_dir().'/gateway-log-inexistente.txt';
+
+        try {
+            app(LogIngestionService::class)->ingest($path);
+
+            $this->fail('A ingestão deveria ter sido interrompida.');
+        } catch (LogFileNotReadableException $exception) {
+            $this->assertSame("Não foi possível ler o arquivo de log [{$path}].", $exception->getMessage());
+        }
+
+        $this->assertDatabaseCount('gateway_logs', 0);
+        $this->assertDatabaseCount('ingestion_checkpoints', 0);
+    }
+
     /**
      * Cria um arquivo de log temporário com uma linha NDJSON por item.
      *
@@ -87,6 +427,26 @@ class LogIngestionServiceTest extends TestCase
         file_put_contents($path, implode("\n", $lines)."\n");
 
         return $this->files[] = $path;
+    }
+
+    /**
+     * Acrescenta linhas ao final de um arquivo de log, como o gateway faz.
+     *
+     * @param  list<string>  $lines
+     */
+    private function appendToLogFile(string $path, array $lines): void
+    {
+        file_put_contents($path, implode("\n", $lines)."\n", FILE_APPEND);
+    }
+
+    /**
+     * Substitui o conteúdo de um arquivo de log, mantendo o mesmo caminho.
+     *
+     * @param  list<string>  $lines
+     */
+    private function replaceLogFile(string $path, array $lines): void
+    {
+        file_put_contents($path, implode("\n", $lines)."\n");
     }
 
     /**
