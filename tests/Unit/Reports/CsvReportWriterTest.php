@@ -3,6 +3,7 @@
 namespace Tests\Unit\Reports;
 
 use App\Contracts\Report;
+use App\Exceptions\ReportNotWritableException;
 use App\Services\Reports\CsvReportWriter;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -88,6 +89,25 @@ class CsvReportWriterTest extends TestCase
 
         $this->assertSame("service_name\nritchie\n", file_get_contents($path));
         $this->assertSame(['exemplo.csv'], array_values(array_diff(scandir($this->directory), ['.', '..'])));
+    }
+
+    public function test_it_fails_when_the_directory_is_read_only(): void
+    {
+        if (posix_geteuid() === 0) {
+            $this->markTestSkipped('O usuário root consegue gravar mesmo em diretórios somente leitura.');
+        }
+
+        $directory = $this->directory.'/somente-leitura';
+
+        mkdir($directory, 0555);
+
+        $this->expectException(ReportNotWritableException::class);
+        $this->expectExceptionMessage("Não foi possível gravar relatórios no diretório [{$directory}].");
+
+        (new CsvReportWriter)->write(
+            $this->report(filename: 'exemplo.csv', headers: ['service_name'], rows: [['ritchie']]),
+            $directory,
+        );
     }
 
     /**

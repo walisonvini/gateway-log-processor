@@ -293,6 +293,27 @@ class LogIngestionServiceTest extends TestCase
         );
     }
 
+    public function test_it_does_nothing_when_the_only_new_content_is_an_unfinished_line(): void
+    {
+        $path = $this->createLogFile([$this->logLine()]);
+
+        $service = app(LogIngestionService::class);
+
+        $service->ingest($path);
+
+        $offsetBefore = IngestionCheckpoint::sole()->byte_offset;
+
+        // Desde a última execução, o gateway só começou a escrever uma linha.
+        file_put_contents($path, substr($this->logLine(), 0, 50), FILE_APPEND);
+
+        $result = $service->ingest($path);
+
+        $this->assertSame(0, $result->processed);
+        $this->assertSame(0, $result->skipped);
+        $this->assertDatabaseCount('gateway_logs', 1);
+        $this->assertSame($offsetBefore, IngestionCheckpoint::sole()->byte_offset);
+    }
+
     public function test_it_fails_when_the_file_is_smaller_than_what_was_already_processed(): void
     {
         $path = $this->createLogFile([
