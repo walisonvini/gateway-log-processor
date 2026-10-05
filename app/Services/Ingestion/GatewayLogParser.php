@@ -97,10 +97,6 @@ class GatewayLogParser
     {
         $value = Arr::get($payload, $field);
 
-        if (is_string($value) && ctype_digit($value)) {
-            $value = (int) $value;
-        }
-
         if (! is_int($value) || $value < $min || $value > $max) {
             throw InvalidLogLineException::invalidField($field);
         }
