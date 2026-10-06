@@ -4,7 +4,8 @@ namespace App\Services\Ingestion;
 
 use App\DTOs\GatewayLogData;
 use App\Exceptions\InvalidLogLineException;
-use Carbon\CarbonImmutable;
+use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Support\Arr;
 use JsonException;
 
@@ -68,12 +69,13 @@ class GatewayLogParser
      *
      * @param  array<string, mixed>  $payload
      */
-    private function startedAt(array $payload): CarbonImmutable
+    private function startedAt(array $payload): DateTimeImmutable
     {
-        return CarbonImmutable::createFromTimestamp(
-            $this->integer($payload, 'started_at', self::MAX_TIMESTAMP, min: 1),
-            date_default_timezone_get(),
-        );
+        $timestamp = $this->integer($payload, 'started_at', self::MAX_TIMESTAMP, min: 1);
+
+        // O "@" cria a data em UTC; em seguida ela é convertida para o fuso da aplicação.
+        return (new DateTimeImmutable("@{$timestamp}"))
+            ->setTimezone(new DateTimeZone(date_default_timezone_get()));
     }
 
     /**

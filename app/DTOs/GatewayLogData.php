@@ -2,7 +2,7 @@
 
 namespace App\DTOs;
 
-use Carbon\CarbonImmutable;
+use DateTimeImmutable;
 
 final readonly class GatewayLogData
 {
@@ -17,7 +17,7 @@ final readonly class GatewayLogData
         public int $latencyGateway,
         public int $latencyRequest,
         public string $clientIp,
-        public CarbonImmutable $createdAt,
+        public DateTimeImmutable $createdAt,
     ) {}
 
     /**
