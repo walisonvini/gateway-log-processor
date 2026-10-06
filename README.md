@@ -55,7 +55,7 @@ O processamento é incremental: ao rodar o comando de novo, apenas as linhas nov
 | Opção | Descrição |
 |-------|-----------|
 | `--batch=1000` | Quantidade de linhas inseridas por lote, de 100 a 1000 |
-| `--restart` | Descarta o ponto de retomada e processa o arquivo desde o início |
+| `--restart` | Descarta o ponto de retomada e processa o arquivo desde o início. Use quando o arquivo for substituído; no mesmo arquivo, os registros são duplicados |
 
 3. Gere os relatórios
 ```bash
@@ -84,7 +84,9 @@ docker compose exec app php artisan test
 
 2. Veja a cobertura
 ```bash
-docker compose exec app php artisan test --coverage
+# O PCOV, que mede a cobertura, fica desligado por padrão para não deixar a aplicação mais lenta.
+# A variável PCOV_ENABLED=1 o liga apenas nesta execução.
+docker compose exec -e PCOV_ENABLED=1 app php artisan test --coverage
 ```
 
 Os testes usam um banco MySQL separado, `testing`, criado automaticamente na primeira subida. O banco principal não é afetado.
